@@ -384,21 +384,23 @@ fn draw_metrics_compact(frame: &mut Frame, area: Rect, state: &AppState, _termin
         // Build lines for each URI metric
         let mut lines = Vec::new();
         
-        // Add header with dynamic width
-        let bar_section_width = bar_width + ms_width + 1; // Bar + ms value + space
-        let bar_header = format!("{:─^width$}", " Response Time (ms) ", width = bar_section_width);
+        // Add header with proper alignment matching data lines
+        let uri_header = format!("{:<width$}", "URI", width = uri_column_width);
+        let response_header = format!("{:^width$}", "Response Time (ms)", width = bar_width + ms_width + 1);
+        let req_header = format!("{:>width$}", "Req/min", width = req_width);
         
-        let header = format!("{:<uri_width$}{}{:>req_width$}", 
-            "URI", 
-            bar_header,
-            "Req/min",
-            uri_width = uri_column_width,
-            req_width = req_width
-        );
-        
+        // Create header line with separate spans to match data line structure
         lines.push(Line::from(vec![
             Span::styled(
-                header,
+                uri_header,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ),
+            Span::styled(
+                response_header,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ),
+            Span::styled(
+                req_header,
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             ),
         ]));
