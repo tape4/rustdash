@@ -8,17 +8,10 @@ target/
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Claude-specific files
 CLAUDE.md
 .claude/
-
-# Environment and config
-.env
-*.env.local
-*.env.development
-*.env.production
 
 # Logs
 *.log

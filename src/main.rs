@@ -20,21 +20,60 @@ use ratatui::{
     Terminal,
 };
 use std::{
-    io::{self, stdout},
+    io::{self, stdout, Write},
     sync::Arc,
     time::Duration,
 };
 use tokio::{sync::Mutex, time, sync::mpsc};
 use ui::{draw_ui, ActivePanel, AppState};
 
+fn prompt_for_input(prompt: &str, default: &str) -> String {
+    print!("{} [default: {}]: ", prompt, default);
+    io::stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    
+    let input = input.trim();
+    if input.is_empty() {
+        default.to_string()
+    } else {
+        input.to_string()
+    }
+}
+
+fn get_configuration() -> Settings {
+    println!("=== Monitoring Dashboard Configuration ===");
+    println!("Press Enter to use default values.\n");
+    
+    let prometheus_url = prompt_for_input(
+        "Enter Prometheus URL",
+        "http://localhost:9090"
+    );
+    
+    let loki_url = prompt_for_input(
+        "Enter Loki URL",
+        "http://localhost:3100"
+    );
+    
+    println!("\nConfiguration:");
+    println!("  Prometheus: {}", prometheus_url);
+    println!("  Loki: {}", loki_url);
+    println!("\nStarting dashboard...\n");
+    
+    // Create settings with the provided values
+    let mut settings = Settings::default();
+    settings.prometheus.base_url = prometheus_url;
+    settings.loki.base_url = loki_url;
+    settings
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let settings = Settings::new().unwrap_or_else(|_| {
-        eprintln!("Warning: Could not load config file, using defaults and environment variables");
-        Settings::from_env().unwrap_or_default()
-    });
+    // Get configuration from user input
+    let settings = get_configuration();
 
     let prometheus_client = PrometheusClient::new(settings.prometheus.base_url.clone());
     let loki_client = LokiClient::new(settings.loki.base_url.clone());

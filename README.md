@@ -2,22 +2,50 @@
 
 Real-time terminal-based monitoring dashboard for Prometheus and Loki.
 
-## Quick Start
+## Installation
 
 ```bash
-# Test if Prometheus and Loki are running
-./test_endpoints.sh
+# Clone repository
+git clone <repository-url>
+cd Rust_Board
 
 # Build
 cargo build --release
 
-# Run with defaults (http://localhost:9090 for Prometheus, http://localhost:3100 for Loki)
+# Run
 cargo run
+```
 
-# Run with custom endpoints
-MONITOR_PROMETHEUS_BASE_URL=http://prometheus:9090 \
-MONITOR_LOKI_BASE_URL=http://loki:3100 \
+## Configuration
+
+When you start the application, it will prompt you for endpoints:
+```
+=== Monitoring Dashboard Configuration ===
+Press Enter to use default values.
+
+Enter Prometheus URL [default: http://localhost:9090]: 
+Enter Loki URL [default: http://localhost:3100]: 
+```
+
+Just press Enter to use the default localhost endpoints.
+
+## Quick Example
+
+### Using with Docker services
+```bash
+# Start Prometheus and Loki using Docker
+docker run -d -p 9090:9090 prom/prometheus
+docker run -d -p 3100:3100 grafana/loki
+
+# Run the dashboard (press Enter for defaults)
 cargo run
+```
+
+### Using with custom endpoints
+```bash
+cargo run
+# Enter your Prometheus URL: http://metrics.example.com:9090
+# Enter your Loki URL: http://logs.example.com:3100
 ```
 
 ## Features
@@ -25,24 +53,32 @@ cargo run
 ### Core Features
 - **Real-time metrics from Prometheus**
   - HTTP requests per second
-  - P50, P95, P99 latency percentiles
-  - Auto-fallback to test data if unavailable
+  - URI-based average response times
+  - Time range selector (1m, 5m, 30m, 1h, 24h, All)
+  - Bar chart visualization for response times
 
 - **Live log streaming from Loki**
   - Automatic log fetching every 5 seconds
   - Displays logs in chronological order (newest at bottom)
-  - Smart label detection for fontory service
+  - Auto-detects available log streams
 
 - **Responsive Terminal UI**
   - Adaptive layout for different terminal sizes
   - Minimum terminal size: 80x24
   - Dynamic metrics panel sizing based on terminal height
 
+### Panel Navigation
+- **Tab Navigation**
+  - `Tab` - Switch between Logs and Metrics panels
+  - `ESC` - Deactivate current panel (neutral state)
+  - Active panel highlighted with cyan border
+
 ### Log Navigation & Management
-- **Keyboard Navigation**
+- **Keyboard Navigation (when Logs panel active)**
   - `↑/↓` - Navigate through logs line by line
   - `[/]` - Jump 5 lines up/down quickly
-  - `ESC` - Deselect current log
+  - `Page Up/Down` - Navigate by pages
+  - `Home/End` - Go to first/last log
   - Selection highlighting with gray background
 
 - **New Log Highlighting**
@@ -53,6 +89,12 @@ cargo run
 - **Clipboard Support**
   - `c` - Copy selected log to system clipboard
   - Format: `[LEVEL] message`
+
+### Metrics Navigation
+- **Time Range Selection (when Metrics panel active)**
+  - `←/→` - Change time range (cycles through 1m → 5m → 30m → 1h → 24h → All)
+  - `↑/↓` - Scroll through URI metrics list
+  - Loading indicator shows when fetching new data
 
 ### Display Information
 - **Header Section**
@@ -66,48 +108,45 @@ cargo run
 ### Basic Controls
 - `q` - Quit application
 - `r` - Manual refresh
+- `Tab` - Switch between panels
+- `ESC` - Deactivate current panel
 
-### Log Navigation
-- `↑` - Move selection up / Start selection at newest log
-- `↓` - Move selection down / Start selection at newest log  
-- `[` - Jump 5 lines up
-- `]` - Jump 5 lines down
-- `ESC` - Clear selection
+### Log Panel (when active)
+- `↑/↓` - Navigate logs
+- `[/]` - Jump 5 lines up/down
+- `Page Up/Down` - Navigate by pages
+- `Home/End` - Go to first/last log
 - `c` - Copy selected log to clipboard
+
+### Metrics Panel (when active)
+- `←/→` - Change time range
+- `↑/↓` - Scroll metrics (if list is long)
 
 ## Configuration
 
-Three ways to configure:
+The application prompts for configuration on startup:
 
-1. **Environment Variables** (recommended for Docker)
-```bash
-export MONITOR_PROMETHEUS_BASE_URL=http://localhost:9090
-export MONITOR_LOKI_BASE_URL=http://localhost:3100
-```
-
-2. **Config File** (`config.toml`)
-```toml
-[prometheus]
-base_url = "http://localhost:9090"
-
-[loki]  
-base_url = "http://localhost:3100"
-```
-
-3. **Default Values**
+**Default Values** (just press Enter to use)
 - Prometheus: `http://localhost:9090`
 - Loki: `http://localhost:3100`
 
+**Custom Endpoints**
+- Enter your custom URLs when prompted
+- Example: `http://prometheus.example.com:9090`
+
 ## Requirements
 
-- Rust 1.70+
-- Running Prometheus instance (optional - will show test data if unavailable)
-- Running Loki instance (optional - will show test data if unavailable)
+- Rust 1.70 or higher
+- Terminal with minimum size 80x24
+- (Optional) Running Prometheus instance
+- (Optional) Running Loki instance
+
+Note: The dashboard will display "No data available" if services are not accessible.
 
 ## Troubleshooting
 
 If the dashboard shows no data:
-1. Run `./test_endpoints.sh` to check if services are accessible
-2. Check that Prometheus/Loki are running: `docker ps`
-3. Verify the URLs are correct in your configuration
-4. The dashboard will show test data if services are unavailable
+1. Check that Prometheus/Loki are running
+2. Verify the URLs are correct when prompted
+3. Ensure the services are accessible from your machine
+4. Check firewall settings if using remote endpoints
