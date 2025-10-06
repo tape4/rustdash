@@ -1,25 +1,28 @@
 # RustDash
-🦀 Real-time terminal-based monitoring dashboard for Prometheus and Loki, built with Rust.
+
+[![English](https://img.shields.io/badge/lang-English-blue.svg)](README-en.md)
+
+🦀 Rust로 만든 Prometheus와 Loki용 실시간 터미널 기반 모니터링 대시보드
 
 <img width="1039" height="847" alt="Screenshot 2025-10-06 at 13 10 49" src="https://github.com/user-attachments/assets/968869c3-f153-4974-ad49-d64b7a5ec957" />
 
-## Installation
+## 설치
 
 ```bash
-# Clone repository
+# 저장소 클론
 git clone https://github.com/yourusername/rustdash
 cd rustdash
 
-# Build
+# 빌드
 cargo build --release
 
-# Run
+# 실행
 cargo run
 ```
 
-## Configuration
+## 설정
 
-When you start the application, it will prompt you for endpoints:
+애플리케이션을 시작하면 엔드포인트를 입력하라는 메시지가 표시됩니다:
 ```
 === RustDash Configuration ===
 Press Enter to use default values.
@@ -28,135 +31,127 @@ Enter Prometheus URL [default: http://localhost:9090]:
 Enter Loki URL [default: http://localhost:3100]: 
 ```
 
-Just press Enter to use the default localhost endpoints.
+기본 localhost 엔드포인트를 사용하려면 Enter 키를 누르세요.
 
-## Quick Example
+## 예제
 
-### Using with Docker services
-```bash
-# Start Prometheus and Loki using Docker
-docker run -d -p 9090:9090 prom/prometheus
-docker run -d -p 3100:3100 grafana/loki
-
-# Run the dashboard (press Enter for defaults)
-cargo run
-```
-
-### Using with custom endpoints
+### 커스텀 엔드포인트 사용
 ```bash
 cargo run
-# Enter your Prometheus URL: http://metrics.example.com:9090
-# Enter your Loki URL: http://logs.example.com:3100
+# Prometheus URL 입력: http://metrics.example.com:9090
+# Loki URL 입력: http://logs.example.com:3100
 ```
 
-## Features
+## 주요 기능
 
-### Core Features
-- **Real-time metrics from Prometheus**
-  - HTTP requests per second
-  - URI-based average response times
-  - Time range selector (1m, 5m, 30m, 1h, 24h, All)
-  - Bar chart visualization for response times
+### 핵심 기능
+- **Prometheus 실시간 메트릭**
+  - 초당 HTTP 요청 수
+  - URI별 평균 응답 시간
+  - 시간 범위 선택기 (1분, 5분, 30분, 1시간, 24시간, 전체)
+  - 응답 시간 바 차트 시각화
 
-- **Live log streaming from Loki**
-  - Automatic log fetching every 5 seconds
-  - Displays logs in chronological order (newest at bottom)
-  - Auto-detects available log streams
+- **Loki 로그 스트리밍**
+  - 5초마다 자동 로그 가져오기
+  - 시간순 로그 표시 (최신 로그가 맨 아래)
+  - 사용 가능한 로그 스트림 자동 감지
 
-- **Responsive Terminal UI**
-  - Adaptive layout for different terminal sizes
-  - Minimum terminal size: 80x24
-  - Dynamic metrics panel sizing based on terminal height
+- **반응형 터미널 UI**
+  - 다양한 터미널 크기에 적응
+  - 최소 터미널 크기: 80x24
+  - 터미널 높이에 따른 동적 메트릭 패널 크기 조정
 
-### Panel Navigation
-- **Tab Navigation**
-  - `Tab` - Switch between Logs and Metrics panels
-  - `ESC` - Deactivate current panel (neutral state)
-  - Active panel highlighted with cyan border
+### 패널 탐색
+- **탭 탐색**
+  - `Tab` - 로그와 메트릭 패널 간 전환
+  - `ESC` - 현재 패널 비활성화 (중립 상태)
+  - 활성 패널은 청록색 테두리로 강조 표시
 
-### Log Navigation & Management
-- **Keyboard Navigation (when Logs panel active)**
-  - `↑/↓` - Navigate through logs line by line
-  - `Enter` - Expand/collapse long log messages
-  - `[/]` - Jump 5 lines up/down quickly
-  - `Page Up/Down` - Navigate by pages
-  - `Home/End` - Go to first/last log
-  - Selection highlighting with gray background
+### 로그 탐색 및 관리
+- **키보드 탐색 (로그 패널 활성 시)**
+  - `↑/↓` - 로그 한 줄씩 탐색
+  - `Enter` - 긴 로그 메시지 펼치기/접기
+  - `[/]` - 5줄씩 빠르게 이동
+  - `Page Up/Down` - 페이지 단위로 탐색
+  - `Home/End` - 첫 번째/마지막 로그로 이동
+  - 선택된 로그는 회색 배경으로 강조 표시
 
-- **Log Expansion Feature**
-  - Long logs show `▶` indicator when truncated
-  - Press `Enter` to expand and see full message across multiple lines
-  - Expanded logs show `▼` indicator
-  - Press `Enter` again to collapse back to single line
-  - Word-wrap for better readability when expanded
+- **로그 펼치기 기능**
+  - 잘린 긴 로그는 `▶` 표시
+  - `Enter`를 눌러 전체 메시지를 여러 줄로 확장
+  - 펼쳐진 로그는 `▼` 표시
+  - 다시 `Enter`를 누르면 한 줄로 축소
+  - 펼쳐진 상태에서 단어 단위 줄바꿈으로 가독성 향상
 
-- **New Log Highlighting**
-  - New logs marked with yellow arrow (→) indicator
-  - Highlights persist until newer logs arrive
-  - Auto-scroll to show new logs (disabled when selecting)
+- **새 로그 강조**
+  - 새 로그는 노란색 화살표(→)로 표시
+  - 더 새로운 로그가 도착할 때까지 강조 유지
+  - 새 로그 표시를 위한 자동 스크롤 (선택 시 비활성화)
 
-- **Clipboard Support**
-  - `c` - Copy selected log to system clipboard
-  - Format: `[LEVEL] message`
+- **클립보드 지원**
+  - `c` - 선택한 로그를 시스템 클립보드에 복사
+  - 형식: `[LEVEL] message`
 
-### Metrics Navigation
-- **Time Range Selection (when Metrics panel active)**
-  - `←/→` - Change time range (cycles through 1m → 5m → 30m → 1h → 24h → All)
-  - `↑/↓` - Scroll through URI metrics list
-  - Loading indicator shows when fetching new data
+### 메트릭 탐색
+- **시간 범위 선택 (메트릭 패널 활성 시)**
+  - `←/→` - 시간 범위 변경 (1분 → 5분 → 30분 → 1시간 → 24시간 → 전체)
+  - `↑/↓` - URI 메트릭 목록 스크롤 (목록이 긴 경우)
+  - 새 데이터를 가져올 때 로딩 표시기 표시
 
-### Display Information
-- **Header Section**
-  - Current endpoints (Prometheus & Loki URLs)
-  - Last fetch time (when data was retrieved from servers)
-  - Last update time (when UI was refreshed)
-  - Connection status and new log count
+### 표시 정보
+- **헤더 섹션**
+  - 현재 엔드포인트 (Prometheus & Loki URL)
+  - 마지막 가져오기 시간 (서버에서 데이터를 검색한 시간)
+  - 마지막 업데이트 시간 (UI가 새로 고쳐진 시간)
+  - 연결 상태 및 새 로그 수
 
-## Controls
+## 조작법
 
-### Basic Controls
-- `q` - Quit application
-- `r` - Manual refresh
-- `Tab` - Switch between panels
-- `ESC` - Deactivate current panel
+### 기본 조작
+- `q` - 애플리케이션 종료
+- `r` - 수동 새로고침
+- `Tab` - 패널 간 전환
+- `ESC` - 현재 패널 비활성화
 
-### Log Panel (when active)
-- `↑/↓` - Navigate logs
-- `Enter` - Expand/collapse long log messages (shows ▶ when collapsed, ▼ when expanded)
-- `[/]` - Jump 5 lines up/down
-- `Page Up/Down` - Navigate by pages
-- `Home/End` - Go to first/last log
-- `c` - Copy selected log to clipboard
+### 로그 패널 (활성 시)
+- `↑/↓` - 로그 탐색
+- `Enter` - 긴 로그 메시지 펼치기/접기 (접힌 상태 ▶, 펼친 상태 ▼)
+- `[/]` - 5줄 위/아래로 이동
+- `Page Up/Down` - 페이지 단위로 탐색
+- `Home/End` - 첫 번째/마지막 로그로 이동
+- `c` - 선택한 로그를 클립보드에 복사
 
-### Metrics Panel (when active)
-- `←/→` - Change time range
-- `↑/↓` - Scroll metrics (if list is long)
+### 메트릭 패널 (활성 시)
+- `←/→` - 시간 범위 변경
+- `↑/↓` - 메트릭 스크롤 (목록이 긴 경우)
 
-## Configuration
+## 설정
 
-The application prompts for configuration on startup:
+애플리케이션 시작 시 설정을 입력받습니다:
 
-**Default Values** (just press Enter to use)
+**기본값** (Enter 키만 누르면 사용)
 - Prometheus: `http://localhost:9090`
 - Loki: `http://localhost:3100`
 
-**Custom Endpoints**
-- Enter your custom URLs when prompted
-- Example: `http://prometheus.example.com:9090`
+**커스텀 엔드포인트**
+- 프롬프트가 표시되면 사용자 정의 URL 입력
+- 예: `http://prometheus.example.com:9090`
 
-## Requirements
+## 요구사항
 
-- Rust 1.70 or higher
-- Terminal with minimum size 80x24
-- (Optional) Running Prometheus instance
-- (Optional) Running Loki instance
+- Rust 1.70 이상
+- 최소 크기 80x24의 터미널
 
-Note: The dashboard will display "No data available" if services are not accessible.
+참고: 서비스에 액세스할 수 없는 경우 대시보드에 "No data available"이 표시됩니다.
 
-## Troubleshooting
+## 문제 해결
 
-If the dashboard shows no data:
-1. Check that Prometheus/Loki are running
-2. Verify the URLs are correct when prompted
-3. Ensure the services are accessible from your machine
-4. Check firewall settings if using remote endpoints
+대시보드에 데이터가 표시되지 않는 경우:
+1. Prometheus/Loki가 실행 중인지 확인
+2. 입력한 URL이 올바른지 확인
+3. 서비스가 컴퓨터에서 액세스 가능한지 확인
+4. 원격 엔드포인트를 사용하는 경우 방화벽 설정 확인
+
+## 라이선스
+
+MIT
