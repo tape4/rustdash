@@ -23,6 +23,84 @@ pub struct AppState {
     pub last_terminal_height: u16, // Track terminal height for background updates
     pub last_fetch_count: usize,   // Track how many logs we had in the last fetch
     pub has_initial_fetch: bool,   // Track if we've done the initial fetch
+    pub active_panel: ActivePanel,  // Which panel is currently active
+    pub metrics_scroll_offset: usize, // Scroll offset for metrics
+    pub metrics_time_range: TimeRange, // Current time range for metrics
+    pub metrics_loading: bool, // Whether metrics are currently loading
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ActivePanel {
+    None,    // No panel is active
+    Logs,
+    Metrics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimeRange {
+    OneMin,
+    FiveMin,   // Default
+    ThirtyMin,
+    OneHour,
+    OneDay,
+    All,
+}
+
+impl TimeRange {
+    pub fn as_str(&self) -> &str {
+        match self {
+            TimeRange::OneMin => "1m",
+            TimeRange::FiveMin => "5m",
+            TimeRange::ThirtyMin => "30m",
+            TimeRange::OneHour => "1h",
+            TimeRange::OneDay => "24h",
+            TimeRange::All => "All",
+        }
+    }
+    
+    pub fn as_minutes(&self) -> Option<i64> {
+        match self {
+            TimeRange::OneMin => Some(1),
+            TimeRange::FiveMin => Some(5),
+            TimeRange::ThirtyMin => Some(30),
+            TimeRange::OneHour => Some(60),
+            TimeRange::OneDay => Some(1440),
+            TimeRange::All => None,  // None means no time limit
+        }
+    }
+    
+    pub fn to_prometheus_range(&self) -> String {
+        match self {
+            TimeRange::OneMin => "1m".to_string(),
+            TimeRange::FiveMin => "5m".to_string(),
+            TimeRange::ThirtyMin => "30m".to_string(),
+            TimeRange::OneHour => "1h".to_string(),
+            TimeRange::OneDay => "24h".to_string(),
+            TimeRange::All => "all".to_string(),  // Special case for all
+        }
+    }
+    
+    pub fn next(&self) -> TimeRange {
+        match self {
+            TimeRange::OneMin => TimeRange::FiveMin,
+            TimeRange::FiveMin => TimeRange::ThirtyMin,
+            TimeRange::ThirtyMin => TimeRange::OneHour,
+            TimeRange::OneHour => TimeRange::OneDay,
+            TimeRange::OneDay => TimeRange::All,
+            TimeRange::All => TimeRange::OneMin,
+        }
+    }
+    
+    pub fn prev(&self) -> TimeRange {
+        match self {
+            TimeRange::OneMin => TimeRange::All,
+            TimeRange::FiveMin => TimeRange::OneMin,
+            TimeRange::ThirtyMin => TimeRange::FiveMin,
+            TimeRange::OneHour => TimeRange::ThirtyMin,
+            TimeRange::OneDay => TimeRange::OneHour,
+            TimeRange::All => TimeRange::OneDay,
+        }
+    }
 }
 
 impl Default for AppState {
@@ -41,6 +119,10 @@ impl Default for AppState {
             last_terminal_height: 50,
             last_fetch_count: 0,
             has_initial_fetch: false,
+            active_panel: ActivePanel::None,  // Start with no panel active
+            metrics_scroll_offset: 0,
+            metrics_time_range: TimeRange::FiveMin,  // Default to 5 minutes
+            metrics_loading: false,
         }
     }
 }
@@ -208,95 +290,266 @@ fn draw_endpoints(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_metrics_compact(frame: &mut Frame, area: Rect, state: &AppState, _terminal_size: Rect) {
+    // Calculate time range based on current setting
+    let now = chrono::Local::now();
+    let time_range_display = if let Some(minutes) = state.metrics_time_range.as_minutes() {
+        let from_time = (now - chrono::TimeDelta::try_minutes(minutes).unwrap()).format("%H:%M:%S");
+        let to_time = now.format("%H:%M:%S");
+        format!("[{}] ({} → {})", state.metrics_time_range.as_str(), from_time, to_time)
+    } else {
+        format!("[{}] (All time)", state.metrics_time_range.as_str())
+    };
+    
+    let (border_color, base_title, help_text) = match state.active_panel {
+        ActivePanel::Metrics => (
+            Color::Cyan,
+            "API Response Times",
+            " [↑/↓: scroll, ←/→: time range, ESC: exit] "
+        ),
+        ActivePanel::None => (
+            Color::Gray,
+            "API Response Times",
+            " [TAB to activate] "
+        ),
+        _ => (
+            Color::Yellow,
+            "API Response Times",
+            " [TAB to switch here] "
+        ),
+    };
+    
+    let title = format!(" {} {} {} ", base_title, time_range_display, help_text);
+    
     let metrics_block = Block::default()
-        .title(" Prometheus Metrics ")
+        .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(border_color));
 
-    if let Some(metrics) = &state.metrics {
-        // Create horizontal layout for metrics
-        let metrics_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-            ])
-            .margin(1)
-            .split(area);
-
-        // Requests per second
-        let req_widget = Paragraph::new(vec![
+    // Draw the block first
+    frame.render_widget(metrics_block, area);
+    
+    // Create inner area for content
+    let inner = ratatui::layout::Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    
+    if state.metrics_loading {
+        // Show loading indicator
+        let loading_text = vec![
+            Line::from(""),
             Line::from(vec![
-                Span::styled("Requests/s", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "⏳ Loading metrics...",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
             ]),
+            Line::from(""),
             Line::from(vec![
-                Span::styled(format!("{:.2}", metrics.http_requests_total), Style::default().fg(Color::Green)),
+                Span::styled(
+                    "Please wait while fetching data from Prometheus",
+                    Style::default().fg(Color::Gray),
+                ),
             ]),
-        ])
-        .block(Block::default().borders(Borders::RIGHT))
-        .alignment(Alignment::Center);
+        ];
         
-        frame.render_widget(req_widget, metrics_chunks[0]);
-
-        // P50 Latency
-        let p50_widget = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("P50 Latency", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled(format!("{:.1}ms", metrics.http_request_duration_p50 * 1000.0), Style::default().fg(Color::Green)),
-            ]),
-        ])
-        .block(Block::default().borders(Borders::RIGHT))
-        .alignment(Alignment::Center);
+        let loading_widget = Paragraph::new(loading_text)
+            .alignment(Alignment::Center);
+            
+        frame.render_widget(loading_widget, inner);
+    } else if let Some(metrics) = &state.metrics {
         
-        frame.render_widget(p50_widget, metrics_chunks[1]);
-
-        // P95 Latency
-        let p95_widget = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("P95 Latency", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled(format!("{:.1}ms", metrics.http_request_duration_p95 * 1000.0), Style::default().fg(Color::Yellow)),
-            ]),
-        ])
-        .block(Block::default().borders(Borders::RIGHT))
-        .alignment(Alignment::Center);
+        // Calculate dynamic column widths based on terminal width
+        let available_width = inner.width as usize;
         
-        frame.render_widget(p95_widget, metrics_chunks[2]);
-
-        // P99 Latency
-        let p99_widget = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("P99 Latency", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled(format!("{:.1}ms", metrics.http_request_duration_p99 * 1000.0), Style::default().fg(Color::Red)),
-            ]),
-        ])
-        .alignment(Alignment::Center);
+        // Find the longest URI to determine minimum needed width
+        let max_uri_len = metrics.uri_metrics.iter()
+            .map(|m| m.uri.len())
+            .max()
+            .unwrap_or(20)
+            .min(available_width / 3); // Cap at 1/3 of terminal width
         
-        frame.render_widget(p99_widget, metrics_chunks[3]);
+        // Fixed edge columns
+        let uri_column_width = max_uri_len + 2; // URI on left edge with small padding
+        let req_width = 8; // Reqs/min on right edge (shortened)
+        let ms_width = 7;  // ms value (shortened)
+        let spacing = 2;   // Small spacing between bar and numbers
+        
+        // Calculate middle space for bar chart
+        let middle_space = available_width.saturating_sub(uri_column_width + ms_width + req_width + spacing);
+        let bar_width = middle_space.max(20); // Bar chart takes all middle space, minimum 20 chars
+        
+        // Build lines for each URI metric
+        let mut lines = Vec::new();
+        
+        // Add header with dynamic width
+        let bar_section_width = bar_width + ms_width + 1; // Bar + ms value + space
+        let bar_header = format!("{:─^width$}", " Response Time (ms) ", width = bar_section_width);
+        
+        let header = format!("{:<uri_width$}{}{:>req_width$}", 
+            "URI", 
+            bar_header,
+            "Req/min",
+            uri_width = uri_column_width,
+            req_width = req_width
+        );
+        
+        lines.push(Line::from(vec![
+            Span::styled(
+                header,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ),
+        ]));
+        
+        // Calculate visible metrics based on area height
+        let visible_count = (inner.height as usize).saturating_sub(3).min(10); // Header + footer space
+        let start_idx = state.metrics_scroll_offset;
+        let end_idx = (start_idx + visible_count).min(metrics.uri_metrics.len());
+        
+        // Find the max duration for scaling the bars
+        let max_duration = metrics.uri_metrics.iter()
+            .map(|m| m.avg_duration_ms)
+            .fold(0.0_f64, f64::max)
+            .max(1.0); // Avoid division by zero
+        
+        // Add each visible URI metric
+        for uri_metric in &metrics.uri_metrics[start_idx..end_idx] {
+            // Truncate URI if too long for the calculated width
+            let display_uri = if uri_metric.uri.len() > uri_column_width - 2 {
+                format!("{}...", &uri_metric.uri[..uri_column_width.saturating_sub(5)])
+            } else {
+                uri_metric.uri.clone()
+            };
+            
+            // Color code based on response time
+            let duration_color = if uri_metric.avg_duration_ms < 100.0 {
+                Color::Green
+            } else if uri_metric.avg_duration_ms < 500.0 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            
+            // Create the bar visualization
+            let bar_filled = ((uri_metric.avg_duration_ms / max_duration) * bar_width as f64) as usize;
+            let bar_filled = bar_filled.min(bar_width);
+            
+            let bar_char = match duration_color {
+                Color::Green => "█",
+                Color::Yellow => "█",
+                Color::Red => "█",
+                _ => "█",
+            };
+            
+            let bar_string = format!("{:█<width$}", "", width = bar_filled)
+                .replace(' ', bar_char);
+            let bar_empty = " ".repeat(bar_width.saturating_sub(bar_filled));
+            
+            // Build the line with proper spacing
+            let uri_part = format!("{:<width$}", display_uri, width = uri_column_width);
+            let ms_part = format!("{:>width$.1}", uri_metric.avg_duration_ms, width = ms_width);
+            let req_part = format!("{:>width$.0}", uri_metric.request_count, width = req_width);
+            
+            let line_spans = vec![
+                Span::styled(
+                    uri_part,
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    bar_string,
+                    Style::default().fg(duration_color),
+                ),
+                Span::styled(
+                    bar_empty,
+                    Style::default(),
+                ),
+                Span::styled(
+                    format!(" {}", ms_part),
+                    Style::default().fg(duration_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    req_part,
+                    Style::default().fg(Color::Cyan),
+                ),
+            ];
+            
+            lines.push(Line::from(line_spans));
+        }
+        
+        // Add total requests/sec and scale info at the bottom
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+            
+            // Add scale and period info
+            let scale_text = format!("Scale: █ = {:.0}ms", max_duration);
+            let period_text = match state.metrics_time_range {
+                TimeRange::OneMin => "1-minute average",
+                TimeRange::FiveMin => "5-minute average",
+                TimeRange::ThirtyMin => "30-minute average",
+                TimeRange::OneHour => "1-hour average",
+                TimeRange::OneDay => "24-hour average",
+                TimeRange::All => "All-time average",
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("Total Req/s: {:.2}  |  {}  |  {}", 
+                        metrics.http_requests_total, scale_text, period_text),
+                    Style::default().fg(Color::Gray),
+                ),
+            ]));
+        }
+        
+        // If no URI metrics but we have total
+        if metrics.uri_metrics.is_empty() && metrics.http_requests_total > 0.0 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "No per-URI metrics available",
+                    Style::default().fg(Color::Gray),
+                ),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("Total Requests/sec: {:.2}", metrics.http_requests_total),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+        }
+        
+        let metrics_content = Paragraph::new(lines)
+            .alignment(Alignment::Left);
+        
+        frame.render_widget(metrics_content, inner);
     } else {
         let no_data = Paragraph::new("No metrics data available")
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
         
-        frame.render_widget(no_data, area);
+        frame.render_widget(no_data, inner);
     }
-
-    // Render the outer block last to draw borders over content
-    frame.render_widget(metrics_block, area);
 }
 
 fn draw_logs_wide(frame: &mut Frame, area: Rect, state: &AppState, _terminal_size: Rect) {
-    let help_text = if state.selected_log_index.is_some() {
-        " ↑/↓: navigate | [/]: 5 lines | c: copy | ESC: deselect "
-    } else {
-        " ↑/↓: select & navigate | [/]: jump 5 lines "
+    let (border_color, help_text) = match state.active_panel {
+        ActivePanel::Logs => {
+            let text = if state.selected_log_index.is_some() {
+                " ↑/↓: navigate | [/]: 5 lines | c: copy | ESC: deactivate panel "
+            } else {
+                " ↑/↓: select & navigate | [/]: jump 5 lines | ESC: deactivate panel "
+            };
+            (Color::Cyan, text)
+        },
+        ActivePanel::None => (
+            Color::Gray,
+            " TAB: activate this panel "
+        ),
+        _ => (
+            Color::Magenta,
+            " TAB: switch to this panel "
+        ),
     };
     
     // Count how many logs are marked as new
@@ -309,7 +562,7 @@ fn draw_logs_wide(frame: &mut Frame, area: Rect, state: &AppState, _terminal_siz
     let logs_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_style(Style::default().fg(border_color));
 
     if !state.logs.is_empty() {
         // Get the available width for log messages

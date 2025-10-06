@@ -24,8 +24,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{sync::Mutex, time};
-use ui::{draw_ui, AppState};
+use tokio::{sync::Mutex, time, sync::mpsc};
+use ui::{draw_ui, ActivePanel, AppState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,6 +49,9 @@ async fn main() -> Result<()> {
 
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
+    // Create channel for triggering immediate refresh
+    let (refresh_tx, mut refresh_rx) = mpsc::channel::<()>(10);
+
     let app_state_clone = app_state.clone();
     let settings_clone = settings.clone();
 
@@ -61,15 +64,29 @@ async fn main() -> Result<()> {
         let mut first_run = true;
         
         loop {
-            // Skip the first tick to execute immediately
+            // Wait for either interval tick or manual refresh signal
             if !first_run {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    _ = refresh_rx.recv() => {
+                        // Manual refresh requested, set loading state
+                        let mut state = app_state_clone.lock().await;
+                        state.metrics_loading = true;
+                        drop(state);
+                    }
+                }
             } else {
                 first_run = false;
             }
             
-            // Fetch metrics
-            let metrics = prometheus_client.get_metrics().await.ok();
+            // Get current time range from state
+            let time_range_str = {
+                let state = app_state_clone.lock().await;
+                state.metrics_time_range.to_prometheus_range()
+            };
+            
+            // Fetch metrics with the current time range
+            let metrics = prometheus_client.get_metrics(&time_range_str).await.ok();
             
             // Fetch logs directly (get all logs)
             let all_logs = if let Ok(fetched_logs) = loki_client
@@ -84,6 +101,7 @@ async fn main() -> Result<()> {
             // Update state while preserving scroll position
             let mut state = app_state_clone.lock().await;
             state.metrics = metrics;
+            state.metrics_loading = false; // Clear loading state
             
             // Preserve scroll position and selection when updating logs
             let old_scroll_offset = state.log_scroll_offset;
@@ -187,7 +205,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    let res = run_app(&mut terminal, app_state.clone(), settings).await;
+    let res = run_app(&mut terminal, app_state.clone(), settings, refresh_tx).await;
 
     restore_terminal()?;
 
@@ -214,6 +232,7 @@ async fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app_state: Arc<Mutex<AppState>>,
     settings: Settings,
+    refresh_tx: mpsc::Sender<()>,
 ) -> io::Result<()> {
     let _prometheus_client = PrometheusClient::new(settings.prometheus.base_url.clone());
     let _loki_client = LokiClient::new(settings.loki.base_url.clone());
@@ -242,72 +261,127 @@ async fn run_app<B: Backend>(
                             state.status = "Manual refresh triggered".to_string();
                             state.last_update = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                         }
+                        KeyCode::Tab => {
+                            // Cycle between panels: None -> Logs -> Metrics -> Logs...
+                            state.active_panel = match state.active_panel {
+                                ActivePanel::None => ActivePanel::Logs,
+                                ActivePanel::Logs => ActivePanel::Metrics,
+                                ActivePanel::Metrics => ActivePanel::Logs,
+                            };
+                            state.status = match state.active_panel {
+                                ActivePanel::None => "No panel active".to_string(),
+                                ActivePanel::Logs => "Logs panel active".to_string(),
+                                ActivePanel::Metrics => "Metrics panel active".to_string(),
+                            };
+                        }
                         KeyCode::Up => {
-                            // Move selection up
-                            if state.all_logs.is_empty() {
-                                continue;
-                            }
-                            
-                            match state.selected_log_index {
-                                None => {
-                                    // Start selection from bottom (newest log)
-                                    let last_idx = state.all_logs.len() - 1;
-                                    state.selected_log_index = Some(last_idx);
-                                    // Scroll to show the last log
-                                    let visible_height = state.get_visible_height(terminal_size.height);
-                                    if state.all_logs.len() > visible_height {
-                                        state.log_scroll_offset = state.all_logs.len() - visible_height;
-                                    } else {
-                                        state.log_scroll_offset = 0;
+                            match state.active_panel {
+                                ActivePanel::Logs => {
+                                    // Move selection up in logs
+                                    if state.all_logs.is_empty() {
+                                        continue;
+                                    }
+                                    
+                                    match state.selected_log_index {
+                                        None => {
+                                            // Start selection from bottom (newest log)
+                                            let last_idx = state.all_logs.len() - 1;
+                                            state.selected_log_index = Some(last_idx);
+                                            // Scroll to show the last log
+                                            let visible_height = state.get_visible_height(terminal_size.height);
+                                            if state.all_logs.len() > visible_height {
+                                                state.log_scroll_offset = state.all_logs.len() - visible_height;
+                                            } else {
+                                                state.log_scroll_offset = 0;
+                                            }
+                                        }
+                                        Some(idx) if idx > 0 => {
+                                            state.selected_log_index = Some(idx - 1);
+                                            // Adjust scroll if needed
+                                            if idx - 1 < state.log_scroll_offset {
+                                                state.log_scroll_offset = idx - 1;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    state.update_visible_logs_with_height(terminal_size.height);
+                                }
+                                ActivePanel::Metrics => {
+                                    // Scroll up in metrics
+                                    if state.metrics_scroll_offset > 0 {
+                                        state.metrics_scroll_offset -= 1;
+                                        if let Some(metrics) = &state.metrics {
+                                            state.status = format!("Showing APIs {}-{} of {}", 
+                                                state.metrics_scroll_offset + 1,
+                                                (state.metrics_scroll_offset + 5).min(metrics.uri_metrics.len()),
+                                                metrics.uri_metrics.len()
+                                            );
+                                        }
                                     }
                                 }
-                                Some(idx) if idx > 0 => {
-                                    state.selected_log_index = Some(idx - 1);
-                                    // Adjust scroll if needed
-                                    if idx - 1 < state.log_scroll_offset {
-                                        state.log_scroll_offset = idx - 1;
-                                    }
+                                ActivePanel::None => {
+                                    // Do nothing when no panel is active
                                 }
-                                _ => {}
                             }
-                            state.update_visible_logs_with_height(terminal_size.height);
                         }
                         KeyCode::Down => {
-                            // Move selection down
-                            if state.all_logs.is_empty() {
-                                continue;
-                            }
-                            
-                            match state.selected_log_index {
-                                None => {
-                                    // Start selection from bottom (newest log)
-                                    let last_idx = state.all_logs.len() - 1;
-                                    state.selected_log_index = Some(last_idx);
-                                    // Scroll to show the last log
-                                    let visible_height = state.get_visible_height(terminal_size.height);
-                                    if state.all_logs.len() > visible_height {
-                                        state.log_scroll_offset = state.all_logs.len() - visible_height;
-                                    } else {
-                                        state.log_scroll_offset = 0;
+                            match state.active_panel {
+                                ActivePanel::Logs => {
+                                    // Move selection down in logs
+                                    if state.all_logs.is_empty() {
+                                        continue;
+                                    }
+                                    
+                                    match state.selected_log_index {
+                                        None => {
+                                            // Start selection from bottom (newest log)
+                                            let last_idx = state.all_logs.len() - 1;
+                                            state.selected_log_index = Some(last_idx);
+                                            // Scroll to show the last log
+                                            let visible_height = state.get_visible_height(terminal_size.height);
+                                            if state.all_logs.len() > visible_height {
+                                                state.log_scroll_offset = state.all_logs.len() - visible_height;
+                                            } else {
+                                                state.log_scroll_offset = 0;
+                                            }
+                                        }
+                                        Some(idx) if idx < state.all_logs.len() - 1 => {
+                                            state.selected_log_index = Some(idx + 1);
+                                            // Adjust scroll if needed
+                                            let visible_height = state.get_visible_height(terminal_size.height);
+                                            // Check if the new selection is below the visible area
+                                            if idx + 1 >= state.log_scroll_offset + visible_height {
+                                                // Scroll down to show the selected item at the bottom of the visible area
+                                                state.log_scroll_offset = (idx + 2).saturating_sub(visible_height);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    state.update_visible_logs_with_height(terminal_size.height);
+                                }
+                                ActivePanel::Metrics => {
+                                    // Scroll down in metrics
+                                    let metrics_info = state.metrics.as_ref().map(|m| (m.uri_metrics.len(), m.uri_metrics.len().saturating_sub(5)));
+                                    if let Some((total, max_offset)) = metrics_info {
+                                        if state.metrics_scroll_offset < max_offset {
+                                            state.metrics_scroll_offset += 1;
+                                            state.status = format!("Showing APIs {}-{} of {}", 
+                                                state.metrics_scroll_offset + 1,
+                                                (state.metrics_scroll_offset + 5).min(total),
+                                                total
+                                            );
+                                        }
                                     }
                                 }
-                                Some(idx) if idx < state.all_logs.len() - 1 => {
-                                    state.selected_log_index = Some(idx + 1);
-                                    // Adjust scroll if needed
-                                    let visible_height = state.get_visible_height(terminal_size.height);
-                                    // Check if the new selection is below the visible area
-                                    if idx + 1 >= state.log_scroll_offset + visible_height {
-                                        // Scroll down to show the selected item at the bottom of the visible area
-                                        state.log_scroll_offset = (idx + 2).saturating_sub(visible_height);
-                                    }
+                                ActivePanel::None => {
+                                    // Do nothing when no panel is active
                                 }
-                                _ => {}
                             }
-                            state.update_visible_logs_with_height(terminal_size.height);
                         }
                         KeyCode::Char('[') => {
-                            // Move up 5 lines
-                            if let Some(idx) = state.selected_log_index {
+                            if state.active_panel == ActivePanel::Logs {
+                                // Move up 5 lines in logs
+                                if let Some(idx) = state.selected_log_index {
                                 let new_idx = idx.saturating_sub(5);
                                 state.selected_log_index = Some(new_idx);
                                 if new_idx < state.log_scroll_offset {
@@ -326,11 +400,13 @@ async fn run_app<B: Backend>(
                                     state.log_scroll_offset = 0;
                                 }
                                 state.update_visible_logs_with_height(terminal_size.height);
+                                }
                             }
                         }
                         KeyCode::Char(']') => {
-                            // Move down 5 lines
-                            if let Some(idx) = state.selected_log_index {
+                            if state.active_panel == ActivePanel::Logs {
+                                // Move down 5 lines in logs
+                                if let Some(idx) = state.selected_log_index {
                                 let new_idx = (idx + 5).min(state.all_logs.len().saturating_sub(1));
                                 state.selected_log_index = Some(new_idx);
                                 let visible_height = state.get_visible_height(terminal_size.height);
@@ -350,15 +426,26 @@ async fn run_app<B: Backend>(
                                     state.log_scroll_offset = 0;
                                 }
                                 state.update_visible_logs_with_height(terminal_size.height);
+                                }
                             }
                         }
                         KeyCode::Esc => {
-                            // Deselect
-                            state.selected_log_index = None;
+                            // Deactivate current panel or deselect in logs
+                            if state.active_panel == ActivePanel::Logs && state.selected_log_index.is_some() {
+                                // Just deselect the log, keep panel active
+                                state.selected_log_index = None;
+                                state.status = "Log deselected".to_string();
+                            } else {
+                                // Deactivate the panel
+                                state.active_panel = ActivePanel::None;
+                                state.selected_log_index = None;
+                                state.status = "No panel active - press TAB to activate a panel".to_string();
+                            }
                         }
                         KeyCode::Char('c') => {
-                            // Copy selected log to clipboard
-                            if let Some(idx) = state.selected_log_index {
+                            if state.active_panel == ActivePanel::Logs {
+                                // Copy selected log to clipboard
+                                if let Some(idx) = state.selected_log_index {
                                 if let Some(log) = state.all_logs.get(idx) {
                                     let log_text = format!("[{}] {}", 
                                         log.level, log.message);
@@ -381,6 +468,27 @@ async fn run_app<B: Backend>(
                                         }
                                     }
                                 }
+                                }
+                            }
+                        }
+                        KeyCode::Left => {
+                            if state.active_panel == ActivePanel::Metrics {
+                                // Change to previous time range
+                                state.metrics_time_range = state.metrics_time_range.prev();
+                                state.status = format!("Time range: {}", state.metrics_time_range.as_str());
+                                state.metrics_loading = true; // Set loading state
+                                // Trigger immediate refresh
+                                let _ = refresh_tx.send(()).await;
+                            }
+                        }
+                        KeyCode::Right => {
+                            if state.active_panel == ActivePanel::Metrics {
+                                // Change to next time range
+                                state.metrics_time_range = state.metrics_time_range.next();
+                                state.status = format!("Time range: {}", state.metrics_time_range.as_str());
+                                state.metrics_loading = true; // Set loading state
+                                // Trigger immediate refresh
+                                let _ = refresh_tx.send(()).await;
                             }
                         }
                         _ => {}
