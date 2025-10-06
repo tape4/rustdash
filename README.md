@@ -1,7 +1,7 @@
 # RustDash
 🦀 Real-time terminal-based monitoring dashboard for Prometheus and Loki, built with Rust.
 
-<img width="1039" height="847" alt="Screenshot 2025-10-06 at 12 34 16" src="https://github.com/user-attachments/assets/d4ec08f2-bcf5-40f2-9e46-631ceb75db8d" />
+<img width="1039" height="847" alt="Screenshot 2025-10-06 at 13 10 49" src="https://github.com/user-attachments/assets/968869c3-f153-4974-ad49-d64b7a5ec957" />
 
 ## Installation
 
