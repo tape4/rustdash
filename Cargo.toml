@@ -1,7 +1,12 @@
 [package]
-name = "monitoring-dashboard"
+name = "rustdash"
 version = "0.1.0"
 edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Terminal-based monitoring dashboard for Prometheus and Loki built with Rust"
+repository = "https://github.com/yourusername/rustdash"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 # TUI framework

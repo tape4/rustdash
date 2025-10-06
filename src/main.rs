@@ -43,7 +43,7 @@ fn prompt_for_input(prompt: &str, default: &str) -> String {
 }
 
 fn get_configuration() -> Settings {
-    println!("=== Monitoring Dashboard Configuration ===");
+    println!("=== RustDash Configuration ===");
     println!("Press Enter to use default values.\n");
     
     let prometheus_url = prompt_for_input(
@@ -507,6 +507,24 @@ async fn run_app<B: Backend>(
                                         }
                                     }
                                 }
+                                }
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if state.active_panel == ActivePanel::Logs {
+                                // Toggle expanded state for selected log
+                                if let Some(selected_idx) = state.selected_log_index {
+                                    if state.expanded_log_index == Some(selected_idx) {
+                                        // Collapse if already expanded
+                                        state.expanded_log_index = None;
+                                        state.status = "Log collapsed".to_string();
+                                    } else {
+                                        // Expand the selected log
+                                        state.expanded_log_index = Some(selected_idx);
+                                        state.status = "Log expanded - press Enter again to collapse".to_string();
+                                    }
+                                    // Update visible logs to reflect the change
+                                    state.update_visible_logs_with_height(terminal_size.height);
                                 }
                             }
                         }

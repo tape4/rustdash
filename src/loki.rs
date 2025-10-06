@@ -168,7 +168,7 @@ impl LokiClient {
             },
             LogEntry {
                 timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                message: "Monitoring Dashboard is running in demo mode".to_string(),
+                message: "RustDash is running in demo mode".to_string(),
                 level: "INFO".to_string(),
                 is_new: false,
             },

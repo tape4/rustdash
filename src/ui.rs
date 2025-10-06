@@ -27,6 +27,7 @@ pub struct AppState {
     pub metrics_scroll_offset: usize, // Scroll offset for metrics
     pub metrics_time_range: TimeRange, // Current time range for metrics
     pub metrics_loading: bool, // Whether metrics are currently loading
+    pub expanded_log_index: Option<usize>, // Index of the log that is expanded to show full content
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -123,6 +124,7 @@ impl Default for AppState {
             metrics_scroll_offset: 0,
             metrics_time_range: TimeRange::FiveMin,  // Default to 5 minutes
             metrics_loading: false,
+            expanded_log_index: None,
         }
     }
 }
@@ -242,7 +244,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
     let header = Paragraph::new(vec![Line::from(vec![
         Span::raw(" "),
         Span::styled(
-            "Monitoring Dashboard",
+            "RustDash",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -258,7 +260,6 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
             Style::default().fg(Color::Gray),
         ),
     ])])
-    .style(Style::default().bg(Color::Black))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -278,7 +279,6 @@ fn draw_endpoints(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("Loki: ", Style::default().fg(Color::Magenta)),
         Span::raw(&state.loki_url),
     ])])
-    .style(Style::default().bg(Color::Black))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -538,7 +538,7 @@ fn draw_logs_wide(frame: &mut Frame, area: Rect, state: &AppState, _terminal_siz
     let (border_color, help_text) = match state.active_panel {
         ActivePanel::Logs => {
             let text = if state.selected_log_index.is_some() {
-                " ↑/↓: navigate | [/]: 5 lines | c: copy | ESC: deactivate panel "
+                " ↑/↓: navigate | Enter: expand/collapse | [/]: 5 lines | c: copy | ESC: exit "
             } else {
                 " ↑/↓: select & navigate | [/]: jump 5 lines | ESC: deactivate panel "
             };
@@ -591,18 +591,48 @@ fn draw_logs_wide(frame: &mut Frame, area: Rect, state: &AppState, _terminal_siz
                 // Calculate available width for message
                 let message_width = available_width.saturating_sub(prefix_len);
                 
-                // Truncate or wrap the message if needed
-                let message = if log.message.len() > message_width && message_width > 20 {
-                    // Add ellipsis if message is too long
-                    format!("{}...", &log.message[..message_width.saturating_sub(3)])
-                } else {
-                    log.message.clone()
-                };
-
                 // Check if this log is selected
                 let is_selected = state.selected_log_index
                     .map(|selected| selected == state.log_scroll_offset + index)
                     .unwrap_or(false);
+                
+                // Check if this log is expanded
+                let is_expanded = state.expanded_log_index
+                    .map(|expanded| expanded == state.log_scroll_offset + index)
+                    .unwrap_or(false);
+                
+                // Handle message display based on expanded state
+                let (message_lines, is_truncated) = if is_expanded {
+                    // Show full message, wrapped across multiple lines
+                    let mut lines = Vec::new();
+                    let mut remaining = log.message.as_str();
+                    
+                    while !remaining.is_empty() {
+                        if remaining.len() <= message_width {
+                            lines.push(remaining.to_string());
+                            break;
+                        } else {
+                            // Find a good break point (space, if possible)
+                            let mut break_point = message_width;
+                            if let Some(space_pos) = remaining[..message_width].rfind(' ') {
+                                if space_pos > message_width / 2 {
+                                    break_point = space_pos;
+                                }
+                            }
+                            lines.push(remaining[..break_point].to_string());
+                            remaining = remaining[break_point..].trim_start();
+                        }
+                    }
+                    (lines, false)
+                } else {
+                    // Normal display - truncate if needed
+                    if log.message.len() > message_width && message_width > 20 {
+                        // Add ellipsis if message is too long
+                        (vec![format!("{}...", &log.message[..message_width.saturating_sub(3)])], true)
+                    } else {
+                        (vec![log.message.clone()], false)
+                    }
+                };
                 
                 let style = if is_selected {
                     Style::default().bg(Color::DarkGray).fg(Color::White)
@@ -613,49 +643,93 @@ fn draw_logs_wide(frame: &mut Frame, area: Rect, state: &AppState, _terminal_siz
                     Style::default()
                 };
 
-                let content = if log.is_new {
-                    // New logs: Add a special marker and highlight
-                    vec![Line::from(vec![
-                        Span::styled(
-                            "→ ",  // Arrow indicator for new logs
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            level_str,
-                            if is_selected {
-                                Style::default().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                            },
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            message,
-                            if is_selected {
-                                Style::default().bg(Color::DarkGray).fg(Color::White)
-                            } else {
-                                Style::default().fg(Color::Yellow)
-                            },
-                        ),
-                    ])]
-                } else {
-                    // Normal logs
-                    vec![Line::from(vec![
-                        Span::raw("  "),  // Spacing to align with new logs
-                        Span::styled(
-                            level_str,
-                            if is_selected {
-                                Style::default().bg(Color::DarkGray).fg(level_color).add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(level_color).add_modifier(Modifier::BOLD)
-                            },
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            message,
-                            style,
-                        ),
-                    ])]
+                let mut content = Vec::new();
+                
+                // Build the first line with level and first message line
+                if let Some(first_message) = message_lines.first() {
+                    if log.is_new {
+                        // New logs: Add a special marker and highlight
+                        let mut line_spans = vec![
+                            Span::styled(
+                                "→ ",  // Arrow indicator for new logs
+                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                level_str.clone(),
+                                if is_selected {
+                                    Style::default().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                } else {
+                                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                },
+                            ),
+                            Span::raw(" "),
+                            Span::styled(
+                                first_message.clone(),
+                                if is_selected {
+                                    Style::default().bg(Color::DarkGray).fg(Color::White)
+                                } else {
+                                    Style::default().fg(Color::Yellow)
+                                },
+                            ),
+                        ];
+                        
+                        // Add expand/collapse indicator if truncated or expanded
+                        if is_expanded {
+                            line_spans.push(Span::styled(" ▼", Style::default().fg(Color::Cyan)));
+                        } else if is_truncated {
+                            line_spans.push(Span::styled(" ▶", Style::default().fg(Color::Cyan)));
+                        }
+                        
+                        content.push(Line::from(line_spans));
+                    } else {
+                        // Normal logs
+                        let mut line_spans = vec![
+                            Span::raw("  "),  // Spacing to align with new logs
+                            Span::styled(
+                                level_str.clone(),
+                                if is_selected {
+                                    Style::default().bg(Color::DarkGray).fg(level_color).add_modifier(Modifier::BOLD)
+                                } else {
+                                    Style::default().fg(level_color).add_modifier(Modifier::BOLD)
+                                },
+                            ),
+                            Span::raw(" "),
+                            Span::styled(
+                                first_message.clone(),
+                                style,
+                            ),
+                        ];
+                        
+                        // Add expand/collapse indicator if truncated or expanded
+                        if is_expanded {
+                            line_spans.push(Span::styled(" ▼", Style::default().fg(Color::Cyan)));
+                        } else if is_truncated {
+                            line_spans.push(Span::styled(" ▶", Style::default().fg(Color::Cyan)));
+                        }
+                        
+                        content.push(Line::from(line_spans));
+                    }
+                    
+                    // Add continuation lines if expanded
+                    if is_expanded && message_lines.len() > 1 {
+                        for continuation_line in &message_lines[1..] {
+                            // Add indentation to align with the message part
+                            let indent = " ".repeat(prefix_len + 2); // +2 for the arrow/spacing
+                            content.push(Line::from(vec![
+                                Span::raw(indent),
+                                Span::styled(
+                                    continuation_line.clone(),
+                                    if is_selected {
+                                        Style::default().bg(Color::DarkGray).fg(Color::White)
+                                    } else if log.is_new {
+                                        Style::default().fg(Color::Yellow)
+                                    } else {
+                                        style
+                                    },
+                                ),
+                            ]));
+                        }
+                    }
                 };
 
                 ListItem::new(content)
@@ -693,7 +767,6 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
     ])];
 
     let footer = Paragraph::new(footer_text)
-        .style(Style::default().bg(Color::Black))
         .block(
             Block::default()
                 .borders(Borders::ALL)

@@ -1,13 +1,13 @@
-# Monitoring Dashboard
+# RustDash
 
-Real-time terminal-based monitoring dashboard for Prometheus and Loki.
+🦀 Real-time terminal-based monitoring dashboard for Prometheus and Loki, built with Rust.
 
 ## Installation
 
 ```bash
 # Clone repository
-git clone <repository-url>
-cd Rust_Board
+git clone https://github.com/yourusername/rustdash
+cd rustdash
 
 # Build
 cargo build --release
@@ -20,7 +20,7 @@ cargo run
 
 When you start the application, it will prompt you for endpoints:
 ```
-=== Monitoring Dashboard Configuration ===
+=== RustDash Configuration ===
 Press Enter to use default values.
 
 Enter Prometheus URL [default: http://localhost:9090]: 
@@ -76,10 +76,18 @@ cargo run
 ### Log Navigation & Management
 - **Keyboard Navigation (when Logs panel active)**
   - `↑/↓` - Navigate through logs line by line
+  - `Enter` - Expand/collapse long log messages
   - `[/]` - Jump 5 lines up/down quickly
   - `Page Up/Down` - Navigate by pages
   - `Home/End` - Go to first/last log
   - Selection highlighting with gray background
+
+- **Log Expansion Feature**
+  - Long logs show `▶` indicator when truncated
+  - Press `Enter` to expand and see full message across multiple lines
+  - Expanded logs show `▼` indicator
+  - Press `Enter` again to collapse back to single line
+  - Word-wrap for better readability when expanded
 
 - **New Log Highlighting**
   - New logs marked with yellow arrow (→) indicator
@@ -113,6 +121,7 @@ cargo run
 
 ### Log Panel (when active)
 - `↑/↓` - Navigate logs
+- `Enter` - Expand/collapse long log messages (shows ▶ when collapsed, ▼ when expanded)
 - `[/]` - Jump 5 lines up/down
 - `Page Up/Down` - Navigate by pages
 - `Home/End` - Go to first/last log
